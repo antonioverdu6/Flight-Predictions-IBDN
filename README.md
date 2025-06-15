@@ -1,18 +1,26 @@
 # Flight Predictions - IBDN
 ---
 ## Introducción
-Proyecto de predicción de retrasos de vuelos utilizando diferentes tecnologías en la nube, con el objetivo de calcular dichos retrasos en un frontend básico con varios valores a tener en cuenta en las predicciones.
+Proyecto de predicción de retrasos de vuelos utilizando diferentes tecnologías en la nube, con el objetivo de calcular dichos retrasos en un FrontEnd básico con varios valores a tener en cuenta en las predicciones.
 
 ---
 ## Despliegue
 Para desplegar el proyecto de forma local, simplemente sigue los siguientes pasos:
 
-
 ### Clonar el repositorio
 
-<pre>git clone https://github.com/antonioverdu6/Flight-Predictions-IBDN.git practica_creativa
-cd practica creativa master</pre>
+<pre>git clone https://github.com/antonioverdu6/Flight-Predictions-IBDN.git practica_creativa-master</pre>
+Una vez clonado, nos dirigiremos a la carpeta donde tenemos el *docker-compose.yml*.
+<pre>cd practica_creativa-master</pre>
+Tras acceder a esta, desplegaremos nuestros contenedores utilizando el servicio de Docker tal que:
+<pre>
+docker compose up --build
+</pre>
+Ahora esperaremos un par de minutos para que se desplieguen de manera correcta todas las imágenes. Podremos ir comprobando su funcionamiento mediante el comando:
+<pre>docker compose ps -a</pre>
 
+Para frenar todo el despliegue deberemos escribir *Ctrl + C*, y si queremos bajar los contenedores realizaremos el comando:
+<pre>docker compose down -v</pre>
 
 ## Servicios Desplegados
 Utilizamos diferentes tecnologías, de manera que todo queda automatizado gracias a Docker, estos servicios son:
@@ -77,5 +85,5 @@ Gracias por visitar este repositorio.
 Proyecto desarrollado por:
 
 - [Antonio Verdú Salpico](https://www.linkedin.com/in/antonio-verdu-salpico/)
-- [Jose Ángel Bello Pérez](https://www.linkedin.com/in/jose-angel-bello-perez/)
+- [Jose Ángel Bello Pérez](https://www.linkedin.com/in/josé-ángel-bello-pérez/)
 
