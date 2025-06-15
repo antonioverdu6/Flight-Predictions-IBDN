@@ -75,7 +75,7 @@ Contiene dos procesadores, **uno para el consumer** y el otro para **guardar las
 ### HDFS
 Este servicio almacena las predicciones generadas en formato CSV. Está compuesto por un **Namenode**, que gestiona la organización y el acceso a los datos, y un **Datanode**, encargado de almacenar físicamente los archivos.
 - En este último servicio deberemos acceder a [http://locahost:9870](http://localhost:9870), dentro tendremos un datanode impreso en pantalla, que guardará las predicciones. Para acceder a todas las predicciones realizadas realizaremos los siguientes movimientos en la página web:
-  - Arriba a la derecha clickaremos sobre **browse the file system** y tras eso iremos seleccionando con la ruta **user/spark/predictions**, llegando al histórico de predicciones.
+  - Arriba a la derecha clickaremos sobre **utilities** y tras eso iremos seleccionando con la ruta **user/spark/predictions**, llegando al histórico de predicciones.
 
 ---
 **Agradecimientos**
