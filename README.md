@@ -85,5 +85,5 @@ Gracias por visitar este repositorio.
 Proyecto desarrollado por:
 
 - [Antonio Verdú Salpico](https://www.linkedin.com/in/antonio-verdu-salpico/)
-- [Jose Ángel Bello Pérez](https://www.linkedin.com/in/josé-ángel-bello-pérez/)
+- [Jose Ángel Bello Pérez](https://www.linkedin.com/in/josé-ángel-bello-pérez-714466294/)
 
