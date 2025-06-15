@@ -1,0 +1,215 @@
+services:
+  mongo:
+    image: mongo:7.0.17
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./docker/mongo/init:/init:ro
+    networks:
+      - gisd_net
+    command: >
+      bash -c "
+      docker-entrypoint.sh mongod &
+      sleep 5 &&
+      /init/import.sh &&
+      wait"
+
+  kafka:
+    image: bitnami/kafka:3.9.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      - KAFKA_CFG_NODE_ID=0
+      - KAFKA_CFG_PROCESS_ROLES=controller,broker
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=0@kafka:9093
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      - KAFKA_KRAFT_CLUSTER_ID=abcdefghijklmno1234567890
+    networks:
+      - gisd_net
+    volumes:
+      - kafka_data:/bitnami/kafka
+    healthcheck: # ¡NUEVO HEALTHCHECK!
+      test: ["CMD-SHELL", "kafka-broker-api-versions.sh --bootstrap-server localhost:9092 || exit 1"]
+      interval: 10s # Chequear cada 10 segundos
+      timeout: 5s   # Esperar 5 segundos por respuesta
+      retries: 10   # Reintentar 10 veces antes de considerar fallido
+      start_period: 30s # Esperar 30 segundos antes de empezar los chequeos (para que Kafka inicie)
+
+  kafka-topic-init:
+    image: bitnami/kafka:latest
+    depends_on:
+      kafka: # Dependencia actualizada para esperar a que Kafka esté saludable
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-c", "/create-topic.sh"]
+    volumes:
+      - ./create-topic.sh:/create-topic.sh
+    networks:
+      - gisd_net
+
+  flask:
+    build:
+      context: .
+      dockerfile: resources/web/Dockerfile
+    container_name: flask
+    ports:
+      - "5001:5001"
+    environment:
+      - PROJECT_HOME=/app
+      - ELASTIC_URL=http://your_elasticsearch_url:9200
+    depends_on:
+      mongo:
+        condition: service_started # No necesitas que mongo esté healthy si no hay interacciones críticas al inicio
+      kafka:
+        condition: service_healthy # ¡DEPENDENCIA ACTUALIZADA! Flask esperará a que Kafka esté listo.
+    networks:
+      - gisd_net
+    volumes:
+      - ./resources/web:/app
+
+  spark-master:
+    image: bitnami/spark:3.5.3
+    container_name: spark-master
+    ports:
+      - "7077:7077"
+      - "9001:9001"
+      - "8080:8080" # UI del master
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+      - INIT_DAEMON_STEP=setup_spark
+      - SERVER=localhost
+      - SPARK_DAEMON_MEMORY=1g
+      - SPARK_PUBLIC_DNS=spark-master
+    volumes:
+      - ./models:/app/models
+    networks:
+      - gisd_net
+
+  spark-worker-1:
+    image: bitnami/spark:3.5.3
+    container_name: spark-worker-1
+    depends_on:
+      spark-master:
+        condition: service_started # Asumiendo que el master solo necesita estar iniciado
+    ports:
+      - "8081:8081" # UI del worker 1
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SERVER=localhost
+      - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_MEMORY=2g
+    volumes:
+      - ./models:/app/models
+    networks:
+      - gisd_net
+
+  spark-worker-2:
+    image: bitnami/spark:3.5.3
+    container_name: spark-worker-2
+    depends_on:
+      spark-master:
+        condition: service_started # Asumiendo que el master solo necesita estar iniciado
+    ports:
+      - "8082:8081" # UI del worker 2 (mapea 8082 del host a 8081 del contenedor)
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SERVER=localhost
+      - SPARK_WORKER_CORES=2
+      - SPARK_WORKER_MEMORY=2g
+    volumes:
+      - ./models:/app/models
+    networks:
+      - gisd_net
+
+  spark-submit:
+    image: bitnami/spark:3.5.3
+    container_name: spark-submit
+    depends_on:
+      spark-master:
+        condition: service_started
+      spark-worker-1:
+        condition: service_started
+      spark-worker-2:
+        condition: service_started
+      kafka: # Asegura que Kafka esté listo para Spark Submit
+        condition: service_healthy
+      mongo:
+        condition: service_started
+
+    ports:
+      - "4040:4040" # UI del driver Spark
+    environment:
+      - SPARK_MASTER=spark://spark-master:7077
+      - SERVER=localhost
+    command: >
+      bash -c "sleep 30 &&
+      spark-submit
+      --class es.upm.dit.ging.predictor.MakePrediction
+      --master spark://spark-master:7077
+      --num-executors 2
+      --executor-cores 1
+      --executor-memory 1g
+      --packages org.mongodb.spark:mongo-spark-connector_2.12:10.4.1,org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3
+      /app/models/flight_prediction_2.12-0.1.jar"
+    volumes:
+      - ./models:/app/models
+    networks:
+      - gisd_net
+
+  nifi:
+    image: apache/nifi:1.25.0
+    container_name: nifi
+    environment:
+      - SINGLE_USER_CREDENTIALS_USERNAME=admin
+      - SINGLE_USER_CREDENTIALS_PASSWORD=098765432100
+      - NIFI_WEB_HTTP_PORT=8443
+    ports:
+      - "8443:8443"
+      - "5050:5050"
+    networks:
+      - gisd_net
+    volumes:
+      - ./nifi_data:/nifi-output
+    
+  hadoop-namenode:
+    image: bde2020/hadoop-namenode:2.0.0-hadoop3.2.1-java8
+    container_name: hadoop-namenode
+    environment:
+      - CLUSTER_NAME=hadoop
+      - HDFS_CONF_dfs_permissions_enabled=false
+      - HDFS_CONF_dfs_webhdfs_enabled=true
+      - CORE_CONF_fs_defaults=hdfs://hadoop-namenode:8020
+    ports:
+      - "9870:9870"  # Interfaz web del NameNode
+    networks:
+      - gisd_net
+    volumes:
+      - hadoop-namenode:/hadoop/dfs/name
+
+  hadoop-datanode:
+    image: bde2020/hadoop-datanode:2.0.0-hadoop3.2.1-java8
+    container_name: hadoop-datanode
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://hadoop-namenode:8020
+      - HDFS_CONF_dfs_webhdfs_enabled=true
+    networks:
+      - gisd_net
+    volumes:
+      - hadoop-datanode:/hadoop/dfs/data
+
+
+networks:
+  gisd_net:
+    driver: bridge
+
+volumes:
+  mongo_data:
+  kafka_data:
+  hadoop-datanode:
+  hadoop-namenode:
