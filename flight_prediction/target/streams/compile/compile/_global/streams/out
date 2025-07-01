@@ -1,0 +1,10 @@
+[0m[[0m[31merror[0m] [0m[0m/home/ibdn/practica_creativa-master/flight_prediction/src/main/scala/es/upm/dit/ging/predictor/MakePrediction.scala:129:70: not found: value predictionRequestsWithRouteMod[0m
+[0m[[0m[31merror[0m] [0m[0m    val predictionRequestsWithRoute = stringIndexerModelMap.foldLeft(predictionRequestsWithRouteMod) {case (df, (col, model)) => model.transform(df)}[0m
+[0m[[0m[31merror[0m] [0m[0m                                                                     ^[0m
+[0m[[0m[31merror[0m] [0m[0m/home/ibdn/practica_creativa-master/flight_prediction/src/main/scala/es/upm/dit/ging/predictor/MakePrediction.scala:129:136: value transform is not a member of Any[0m
+[0m[[0m[31merror[0m] [0m[0m    val predictionRequestsWithRoute = stringIndexerModelMap.foldLeft(predictionRequestsWithRouteMod) {case (df, (col, model)) => model.transform(df)}[0m
+[0m[[0m[31merror[0m] [0m[0m                                                                                                                                       ^[0m
+[0m[[0m[31merror[0m] [0m[0m/home/ibdn/practica_creativa-master/flight_prediction/src/main/scala/es/upm/dit/ging/predictor/MakePrediction.scala:133:81: not found: value predictionRequestsWithRouteMod2[0m
+[0m[[0m[31merror[0m] [0m[0m    val vectorizedFeatures = vectorAssembler.setHandleInvalid("keep").transform(predictionRequestsWithRouteMod2)[0m
+[0m[[0m[31merror[0m] [0m[0m                                                                                ^[0m
+[0m[[0m[31merror[0m] [0m[0mthree errors found[0m
