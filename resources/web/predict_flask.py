@@ -1,15 +1,21 @@
-import sys, os, re, json, uuid, threading, time, datetime
+import sys, os, re
 from flask import Flask, render_template, request, jsonify
+from flask_socketio import SocketIO, emit
 from pymongo import MongoClient
 from bson import json_util
-import iso8601
-from kafka import KafkaProducer, KafkaConsumer, KafkaAdminClient
-from kafka.errors import NoBrokersAvailable
+from kafka.admin import KafkaAdminClient
+import threading
+
+
+# Configuration details
 import config
+
+# Helpers for search and prediction APIs
 import predict_utils
 
 # Set up Flask, Mongo and Elasticsearch
 app = Flask(__name__)
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 client = MongoClient("mongodb://mongo:27017/")
 
@@ -17,14 +23,13 @@ from pyelasticsearch import ElasticSearch
 elastic = ElasticSearch(config.ELASTIC_URL)
 
 import json
+
 # Date/time stuff
 import iso8601
 import datetime
 
-from bson import ObjectId
-
 # Setup Kafka
-from kafka import KafkaProducer
+from kafka import KafkaProducer, KafkaConsumer
 producer = KafkaProducer(bootstrap_servers=['kafka:9092'],api_version=(0,10))
 PREDICTION_TOPIC = 'flight-delay-ml-request'
 
@@ -509,117 +514,91 @@ def flight_delays_page_kafka():
   
   return render_template('flight_delays_predict_kafka.html', form_config=form_config)
 
-
-
-import time
-import json
-import threading
-from flask import Flask, jsonify, request
-from kafka import KafkaConsumer
-from kafka.admin import KafkaAdminClient
-# Consumidor Kafka conectado al topic de predicción
 predictions_store = {}
 
-consumer = KafkaConsumer(
-    'flight-predictions-output',
-    bootstrap_servers='kafka:9092',
-    auto_offset_reset='latest',
-    enable_auto_commit=True,
-    value_deserializer=lambda x: json.loads(x.decode('utf-8')),
-    consumer_timeout_ms=30000  # importante para no bloquear
-)
+# Función para verificar si el tópico está disponible
+import time
+from kafka.errors import NoBrokersAvailable
 
-@app.route('/predictions/kafka', methods=['GET'])
-def get_kafka_predictions():
-    messages = []
-    for msg in consumer:
-        messages.append(msg.value)
-    return jsonify(messages)
-    
-
-# Espera a que el tópico esté disponible
-def wait_for_topic(topic, bootstrap_servers, timeout=30):
-    admin_client = KafkaAdminClient(bootstrap_servers=bootstrap_servers)
+def wait_for_topic(topic, bootstrap_servers, timeout=30, retry_interval=2):
     start_time = time.time()
+
     while True:
-        topics = admin_client.list_topics()
-        if topic in topics:
-            print(f"Tópico '{topic}' está disponible.")
-            break
-        elif time.time() - start_time > timeout:
+        try:
+            admin_client = KafkaAdminClient(bootstrap_servers=bootstrap_servers)
+            topics = admin_client.list_topics()
+            if topic in topics:
+                print(f"Tópico '{topic}' está disponible.")
+                break
+            else:
+                print(f"Tópico '{topic}' no disponible. Esperando...")
+        except NoBrokersAvailable:
+            print("Kafka broker no disponible. Reintentando...")
+
+        if time.time() - start_time > timeout:
             print(f"Tiempo de espera agotado para el tópico '{topic}'.")
             break
-        else:
-            print(f"Tópico '{topic}' no disponible. Esperando...")
-            time.sleep(2)
+        time.sleep(retry_interval)
 
-# Deserializador seguro
-def safe_json_deserialize(m):
-    try:
-        return json.loads(m.decode('utf-8'))
-    except json.JSONDecodeError as e:
-        print(f"Error al deserializar mensaje Kafka: {e}")
-        return None
 
 # Función para consumir mensajes desde Kafka en un hilo de fondo
 def consume_messages():
     consumer = KafkaConsumer(
-        "flight-predictions-output",
+        "flight-delay-ml-response", 
         bootstrap_servers=['kafka:9092'],
         auto_offset_reset='earliest',
         enable_auto_commit=False,
         value_deserializer=lambda m: safe_json_deserialize(m)
     )
-
+    
+    # Consumir mensajes y almacenar las predicciones en el diccionario
     for msg in consumer:
-        if msg.value:
+        if msg.value:  # Verificar si el mensaje tiene contenido
             unique_id = msg.value.get("UUID")
             if unique_id:
                 predictions_store[unique_id] = msg.value
-                print(f"Guardada predicción para UUID {unique_id}")
+                socketio.emit('kafka_response', msg.value)
+# Deserializador seguro para Kafka
+def safe_json_deserialize(m):
+    try:
+        return json.loads(m.decode('utf-8'))
+    except json.JSONDecodeError as e:
+        print(f"Error al deserializar mensaje Kafka: {e}")
+        return None  # Retorna None si no se puede deserializar
 
-# Iniciar el consumidor en un hilo de fondo al arrancar la aplicación
+# Iniciar el consumidor en un hilo de fondo cuando se arranca la aplicación
 def start_kafka_consumer():
-    wait_for_topic('flight-predictions-output', ['kafka:9092'])
+    # Espera hasta que el tópico esté disponible
+    wait_for_topic('flight-delay-ml-response', ['kafka:9092'])
+    
+    # Inicia el hilo para consumir mensajes de Kafka
     kafka_thread = threading.Thread(target=consume_messages)
-    kafka_thread.daemon = True
+    kafka_thread.daemon = True  # Hilo en segundo plano
     kafka_thread.start()
 
-# Llamada al iniciar Flask
+# Llamada a esta función en el inicio de tu aplicación para empezar a consumir
 start_kafka_consumer()
-
 
 @app.route("/flights/delays/predict/classify_realtime/response/<unique_id>")
 def classify_flight_delays_realtime_response(unique_id):
-  """Serves predictions to polling requestors"""
-  
-  prediction = client.agile_data_science.flight_delay_ml_response.find_one(
-    {
-      "UUID": unique_id
-    }
-  )
-  
-  response = {"status": "WAIT", "id": unique_id}
-  if prediction and "prediction_label" in prediction:
-    label_to_code = {
-      "Early": 0,
-      "Slightly Early": 1,
-      "Slightly Late": 2,
-      "Delayed": 3
-    }
-    label = prediction["prediction_label"]
-    code = label_to_code.get(label, 3)  # default to "Delayed" if label unknown
+    """Serves predictions to polling requestors"""
+    
+    # Espera por la predicción en el almacenamiento temporal
+    response = {"status": "WAIT", "id": unique_id}
 
-    response = {
-      "status": "OK",
-      "prediction": {
-        "Prediction": code
-      }
-    }
+    # Buscar la predicción en el almacenamiento temporal (predictions_store)
+    prediction = predictions_store.get(unique_id)
+    
+    if prediction:
+        response["status"] = "OK"
+        response["prediction"] = prediction
+    else:
+        print(f"Predicción para {unique_id} no disponible aún.")
+        # Puedes agregar un tiempo de espera para evitar consultas infinitas
+        time.sleep(1)  # Simulando que el sistema sigue esperando la predicción
 
-  return jsonify(response)
-
-
+    return jsonify(response)
+    
 def shutdown_server():
   func = request.environ.get('werkzeug.server.shutdown')
   if func is None:
@@ -632,8 +611,9 @@ def shutdown():
   return 'Server shutting down...'
 
 if __name__ == "__main__":
-    app.run(
+    socketio.run(
+    app,  
     debug=True,
     host='0.0.0.0',
     port='5001'
-  )
+    )

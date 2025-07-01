@@ -8,4 +8,3 @@ mongoimport --host mongo \
   --collection origin_dest_distances \
   --file /init/origin_dest_distances.jsonl \
   --type json
-
