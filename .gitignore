@@ -56,7 +56,7 @@ deep/data
 
 ghostdriver.log
 
-cassandra
+# cassandra
 
 janusgraph
 
