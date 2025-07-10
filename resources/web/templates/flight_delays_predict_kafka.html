@@ -4,49 +4,71 @@
   / <a href="/flights/delays/predict_kafka">Flight Delay Prediction with Kafka</a>
 
   <p class="lead" style="margin: 10px; margin-left: 0px;">
-    <!-- Airline Name and website-->
     Predicting Flight Delays with Kafka
   </p>
 
-  <!-- Generate form from search_config and request args -->
-  <form id="flight_delay_classification" action="/flights/delays/predict/classify_realtime" method="post">
+  <!-- Formulario generado dinámicamente -->
+  <form id="flight_delay_classification">
     {% for item in form_config %}
-      {% if 'label' in item %}
-        <label for="{{item['field']}}">{{item['label']}}</label>
-      {% else %}
-        <label for="{{item['field']}}">{{item['field']}}</label>
-      {% endif %}
-        <input name="{{item['field']}}" style="width: 36px; margin-right: 10px;" 
+      <label for="{{item['field']}}">
+        {{ item['label'] if 'label' in item else item['field'] }}
+      </label>
+      <input name="{{item['field']}}" style="width: 100px; margin-right: 10px;"
         {% if 'value' in item %}
           value="{{item['value']}}"
         {% endif %}
-        ></input>
+      ></input>
     {% endfor %}
     <button type="submit" class="btn btn-xs btn-default" style="height: 25px">Submit</button>
   </form>
 
   <div style="margin-top: 10px;">
-      <p>Delay: <span id="result" style="display: inline-block;"></span></p>
+    <p>Delay: <span id="result" style="display: inline-block;"></span></p>
   </div>
 
-  <!-- Load our form processing javascript (opcional: puedes quitarlo si solo usas WebSocket) -->
-  <script src="/static/flight_delay_predict_polling.js"></script>
-
-  <!-- WebSocket client -->
+  <!-- WebSocket y lógica -->
+  <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
   <script>
-    const socket = io();  // Conexión automática al mismo host
+    const socket = io();
 
     socket.on('connect', () => {
-      console.log("Conectado a WebSocket");
+      console.log("WebSocket conectado.");
     });
 
-    socket.on('kafka_response', function(data) {
-      console.log("Mensaje Kafka recibido:", data);
+    document.getElementById("flight_delay_classification").addEventListener("submit", function(event) {
+      event.preventDefault();
 
-      // Mostrar resultado si tiene campo Delay
-      if (data && data.Delay !== undefined) {
-        document.getElementById("result").innerText = `${data.Delay} minutos`;
+      const formData = new FormData(event.target);
+      const payload = {};
+
+      for (let [key, value] of formData.entries()) {
+        payload[key] = isNaN(value) ? value : Number(value);
+      }
+
+      console.log("Enviando a Kafka vía WebSocket:", payload);
+      document.getElementById("result").innerText = "Processing...";
+
+      socket.emit("kafka_request", payload);
+    });
+
+    socket.on("kafka_response", (msg) => {
+      console.log("Respuesta recibida:", msg);
+
+      if (msg.status === "WAIT") {
+        document.getElementById("result").innerText = "No se recibió respuesta a tiempo.";
+      } else {
+        const predictionLabels = {
+          0: "Early (15+ Minutes Early)",
+          1: "Slightly Early (0-15 Minute Early)",
+          2: "Slightly Late (0-30 Minute Delay)",
+          3: "Very Late (30+ Minutes Late)"
+        };
+
+        // Puedes cambiar entre 'Prediction' y 'PredictedDelay' según cómo venga el campo del modelo
+        const label = predictionLabels[msg.PredictedDelay] || "Desconocido";
+        document.getElementById("result").innerText = label;
       }
     });
   </script>
 {% endblock %}
+

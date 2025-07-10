@@ -41,9 +41,11 @@ db.flight_delay_ml_response.find()
 </pre>
 
 ### Flask
-Encargado de trasnformar las peticiones en predicciones mediante tópicos, los cuales son referidos como **flight-delay-ml-request** y **flight-predictions-output**.
-Para calcular las predicciones hacemos uso de *predict_flask.py*, el cual es un archivo que dado un tópico de entrada (flight-delay-ml-response) calcula las predicciones para crear el tópico de salida (flight-predictions-output).
-- Comprobamos su funcionamiento si al estar dentro de [http://locahost:5001/flights/delays/predict_kafka](http://localhost:5001/flights/delays/predict_kafka) y realizar un submit, nos llega la predicción.
+Encargado de trasnformar las peticiones en predicciones mediante tópicos, los cuales son referidos como **flight-delay-ml-request** y **flight-predictions-output**.  
+Para calcular las predicciones hacemos uso de *predict_flask.py*, el cual es un archivo que dado un tópico de entrada (**flight-delay-ml-request**) calcula las predicciones para crear el tópico de salida (**flight-predictions-output**).
+
+- **Ahora es obligatorio el uso de WebSockets** en la aplicación Flask para capturar la respuesta de los tópicos de Kafka en tiempo real. Esto permite mostrar las predicciones directamente al usuario en el frontend sin necesidad de recargar la página.
+- Comprobamos su funcionamiento si, al estar dentro de [http://localhost:5001/flights/delays/predict_kafka](http://localhost:5001/flights/delays/predict_kafka) y realizar un submit, recibimos la predicción en tiempo real mediante WebSockets.
 
 ### Spark
 El sistema de predicciones recibe las peticiones enviadas desde *Flask* a través de *Kafka*, procesa los datos mediante un modelo entrenado con **Spark MLlib** y devuelve los resultados. Las predicciones **se almacenan en MongoDB, HDFS y en un tópico de Kafka** para ser consumidas por otros servicios. El motor de predicción está implementado en *Scala* y compilado con *sbt*.
@@ -77,6 +79,25 @@ Este servicio almacena las predicciones generadas en formato CSV. Está compuest
 - En este último servicio deberemos acceder a [http://locahost:9870](http://localhost:9870), dentro tendremos un datanode impreso en pantalla, que guardará las predicciones. Para acceder a todas las predicciones realizadas realizaremos los siguientes movimientos en la página web:
   - Arriba a la derecha clickaremos sobre **utilities** y tras eso iremos seleccionando con la ruta **user/spark/predictions**, llegando al histórico de predicciones.
 
+### Cassandra
+Se ha añadido **Cassandra** como nueva base de datos para alojar los datos de distancias entre aeropuertos.  
+El *job* de predicción que antes consultaba los datos desde MongoDB, ahora lo hace desde **Cassandra**, por lo que ha sido necesario realizar una **migración de datos**.
+
+- Los datos que estaban almacenados en la colección **origin_dest_distances** de Mongo han sido migrados a Cassandra utilizando una herramienta de transformación, partiendo de dicha colección o desde el fichero original de distancias.
+- En Cassandra, los datos se alojan en una tabla con una estructura compatible con el job de predicción de Spark.
+- Este cambio permite una mayor eficiencia en la consulta y escalabilidad del sistema de predicción.
+
+Para acceder al contenedor de Cassandra y verificar los datos migrados:
+
+<pre>docker exec -it cassandra cqlsh</pre>
+
+Una vez dentro, puedes listar los keyspaces y consultar la tabla correspondiente:
+
+<pre>
+DESCRIBE KEYSPACES;
+USE flight_data;
+SELECT * FROM origin_dest_distances;
+</pre>
 ---
 **Agradecimientos**
 
@@ -85,5 +106,3 @@ Gracias por visitar este repositorio.
 Proyecto desarrollado por:
 
 - [Antonio Verdú Salpico](https://www.linkedin.com/in/antonio-verdu-salpico/)
-- [Jose Ángel Bello Pérez](https://www.linkedin.com/in/josé-ángel-bello-pérez-714466294/)
-

@@ -33,7 +33,48 @@ from kafka import KafkaProducer, KafkaConsumer
 producer = KafkaProducer(bootstrap_servers=['kafka:9092'],api_version=(0,10))
 PREDICTION_TOPIC = 'flight-delay-ml-request'
 
+consumer = KafkaConsumer('flight-delay-ml-response', bootstrap_servers='kafka:9092', auto_offset_reset='earliest', enable_auto_commit=True, api_version=(0, 10))
+
 import uuid
+
+@socketio.on('kafka_request')
+def handle_kafka_message(json_data):
+    print("Mensaje recibido desde WebSocket:", json_data)
+
+    # Añadir UUID único
+    unique_id = str(uuid.uuid4())
+    json_data["UUID"] = unique_id
+
+    # Añadir campos derivados esperados por Spark
+    json_data['Distance'] = predict_utils.get_flight_distance(
+        client, json_data['Origin'], json_data['Dest']
+    )
+    json_data.update(predict_utils.get_regression_date_args(json_data['FlightDate']))
+    json_data['Timestamp'] = predict_utils.get_current_timestamp()
+
+    # Enviar a Kafka
+    message_bytes = json.dumps(json_data).encode()
+    producer.send(PREDICTION_TOPIC, message_bytes)
+
+    # Esperar respuesta de Kafka
+    timeout_seconds = 10
+    start_time = time.time()
+    found_msg = None
+
+    while time.time() - start_time < timeout_seconds:
+        msg_pack = consumer.poll(timeout_ms=1000)
+        for tp, messages in msg_pack.items():
+            for message in messages:
+                try:
+                    decoded = json.loads(message.value.decode("utf-8"))
+                    if decoded.get("UUID") == unique_id:
+                        emit("kafka_response", decoded)
+                        return
+                except Exception:
+                    continue
+
+    # Si no llegó respuesta en el tiempo esperado
+    emit("kafka_response", {"status": "WAIT"})
 
 # Chapter 5 controller: Fetch a flight and display it
 @app.route("/on_time_performance")
@@ -611,9 +652,4 @@ def shutdown():
   return 'Server shutting down...'
 
 if __name__ == "__main__":
-    socketio.run(
-    app,  
-    debug=True,
-    host='0.0.0.0',
-    port='5001'
-    )
+    socketio.run(app, host="0.0.0.0", port=5001, debug=True)
