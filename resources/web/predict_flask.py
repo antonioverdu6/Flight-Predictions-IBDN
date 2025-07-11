@@ -33,9 +33,16 @@ from kafka import KafkaProducer, KafkaConsumer
 producer = KafkaProducer(bootstrap_servers=['kafka:9092'],api_version=(0,10))
 PREDICTION_TOPIC = 'flight-delay-ml-request'
 
-consumer = KafkaConsumer('flight-delay-ml-response', bootstrap_servers='kafka:9092', auto_offset_reset='earliest', enable_auto_commit=True, api_version=(0, 10))
-
 import uuid
+
+consumer = KafkaConsumer(
+    'flight-delay-ml-response',
+    bootstrap_servers='kafka:9092',
+    auto_offset_reset='earliest',
+    enable_auto_commit=True,
+    api_version=(0, 10)
+)
+
 
 @socketio.on('kafka_request')
 def handle_kafka_message(json_data):
@@ -75,6 +82,8 @@ def handle_kafka_message(json_data):
 
     # Si no llegó respuesta en el tiempo esperado
     emit("kafka_response", {"status": "WAIT"})
+
+
 
 # Chapter 5 controller: Fetch a flight and display it
 @app.route("/on_time_performance")
@@ -557,89 +566,45 @@ def flight_delays_page_kafka():
 
 predictions_store = {}
 
-# Función para verificar si el tópico está disponible
 import time
-from kafka.errors import NoBrokersAvailable
-
-def wait_for_topic(topic, bootstrap_servers, timeout=30, retry_interval=2):
-    start_time = time.time()
-
-    while True:
-        try:
-            admin_client = KafkaAdminClient(bootstrap_servers=bootstrap_servers)
-            topics = admin_client.list_topics()
-            if topic in topics:
-                print(f"Tópico '{topic}' está disponible.")
-                break
-            else:
-                print(f"Tópico '{topic}' no disponible. Esperando...")
-        except NoBrokersAvailable:
-            print("Kafka broker no disponible. Reintentando...")
-
-        if time.time() - start_time > timeout:
-            print(f"Tiempo de espera agotado para el tópico '{topic}'.")
-            break
-        time.sleep(retry_interval)
-
-
-# Función para consumir mensajes desde Kafka en un hilo de fondo
-def consume_messages():
-    consumer = KafkaConsumer(
-        "flight-delay-ml-response", 
-        bootstrap_servers=['kafka:9092'],
-        auto_offset_reset='earliest',
-        enable_auto_commit=False,
-        value_deserializer=lambda m: safe_json_deserialize(m)
-    )
-    
-    # Consumir mensajes y almacenar las predicciones en el diccionario
-    for msg in consumer:
-        if msg.value:  # Verificar si el mensaje tiene contenido
-            unique_id = msg.value.get("UUID")
-            if unique_id:
-                predictions_store[unique_id] = msg.value
-                socketio.emit('kafka_response', msg.value)
-# Deserializador seguro para Kafka
-def safe_json_deserialize(m):
-    try:
-        return json.loads(m.decode('utf-8'))
-    except json.JSONDecodeError as e:
-        print(f"Error al deserializar mensaje Kafka: {e}")
-        return None  # Retorna None si no se puede deserializar
-
-# Iniciar el consumidor en un hilo de fondo cuando se arranca la aplicación
-def start_kafka_consumer():
-    # Espera hasta que el tópico esté disponible
-    wait_for_topic('flight-delay-ml-response', ['kafka:9092'])
-    
-    # Inicia el hilo para consumir mensajes de Kafka
-    kafka_thread = threading.Thread(target=consume_messages)
-    kafka_thread.daemon = True  # Hilo en segundo plano
-    kafka_thread.start()
-
-# Llamada a esta función en el inicio de tu aplicación para empezar a consumir
-start_kafka_consumer()
 
 @app.route("/flights/delays/predict/classify_realtime/response/<unique_id>")
 def classify_flight_delays_realtime_response(unique_id):
-    """Serves predictions to polling requestors"""
-    
-    # Espera por la predicción en el almacenamiento temporal
+  """Serves predictions to polling requestors"""
+  consumer.subscribe(['flight-delay-ml-response'])
+  timeout_seconds = 20  # Tiempo máximo de espera para encontrar el mensaje
+  start_time = time.time()
+  found_msg = None
+  
+  while time.time() - start_time < timeout_seconds:
+    # Poll para recibir mensajes; ajusta el timeout_ms
+    msg_pack = consumer.poll(timeout_ms=1000)
+    for tp, messages in msg_pack.items():
+      for message in messages:
+        try:
+          data = json.loads(message.value.decode('utf-8'))
+        except Exception as e:
+          # Si no se puede decodificar, ignora este mensaje
+          continue
+        # Comprueba si el UUID del mensaje coincide con el parámetro
+        if data.get("UUID") == unique_id:
+          found_msg = data
+          break
+      if found_msg:
+        break
+    if found_msg:
+      break
+      
+  if found_msg:
+    prediction_value = found_msg.get("prediction", None)
+    response = {"status": "OK", "id": unique_id, "prediction": found_msg}
+  else:
     response = {"status": "WAIT", "id": unique_id}
 
-    # Buscar la predicción en el almacenamiento temporal (predictions_store)
-    prediction = predictions_store.get(unique_id)
-    
-    if prediction:
-        response["status"] = "OK"
-        response["prediction"] = prediction
-    else:
-        print(f"Predicción para {unique_id} no disponible aún.")
-        # Puedes agregar un tiempo de espera para evitar consultas infinitas
-        time.sleep(1)  # Simulando que el sistema sigue esperando la predicción
+# Devuelve la respuesta en formato JSON
+  return json.dumps(response)
 
-    return jsonify(response)
-    
+
 def shutdown_server():
   func = request.environ.get('werkzeug.server.shutdown')
   if func is None:
@@ -651,5 +616,13 @@ def shutdown():
   shutdown_server()
   return 'Server shutting down...'
 
-if __name__ == "__main__":
+
+""" if __name__ == "__main__":
+    app.run(
+    debug=True,
+    host='0.0.0.0',
+    port='5001'
+  )
+ """
+if __name__ == "__main__": #new para websocket 
     socketio.run(app, host="0.0.0.0", port=5001, debug=True)
